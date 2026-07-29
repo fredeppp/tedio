@@ -4,6 +4,8 @@ from datetime import datetime
 import discord
 from discord.ext import tasks
 from groq import Groq
+from flask import Flask
+from threading import Thread
 
 # 🔐 Chaves protegidas por variável de ambiente
 TOKEN = os.environ.get("DISCORD_TOKEN")
@@ -252,6 +254,34 @@ async def on_message(message):
             except Exception as e:
                 print(f"Erro na IA: {e}")
                 await message.channel.send("*Pensando: Deu um nó nos meus neurônios...*\nDesculpa, esqueci como se fala. 😴")
+
+
+# ==========================================
+# 🌐 SERVIDOR WEB PARA O RENDER
+# Mantém o Web Service ativo
+# ==========================================
+
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "🐱 Tédio está online!"
+
+@app.route("/status")
+def status():
+    return {
+        "bot": "Tédio",
+        "status": "online"
+    }
+
+def iniciar_servidor_web():
+    app.run(
+        host="0.0.0.0",
+        port=10000
+    )
+
+Thread(target=iniciar_servidor_web, daemon=True).start()
+
 
 
 bot.run(TOKEN)
