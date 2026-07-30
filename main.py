@@ -308,17 +308,22 @@ class ToolManager:
             }
         },
         {
-            "type": "function",
-            "function": {
-                "name": "ler_canal",
-                "description": "Lê as últimas mensagens enviadas em um canal específico via ID.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"canal_id": {"type": "string", "description": "ID numérico do canal"}},
-                    "required": ["canal_id"]
-                }
-            }
-        },
+			"type": "function",
+			"function": {
+				"name": "ler_canal",
+				"description": "Lê as últimas mensagens enviadas em um canal específico via ID. Se possuir apenas o nome do canal, use ver_canais primeiro.",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"canal_id": {
+							"type": ["string", "number"],
+							"description": "ID numérico do canal Discord. Nunca use nomes como 'admin', 'geral' ou 'chat'."
+						}
+					},
+					"required": ["canal_id"]
+				}
+			}
+		},
         {
             "type": "function",
             "function": {
@@ -335,20 +340,26 @@ class ToolManager:
             }
         },
         {
-            "type": "function",
-            "function": {
-                "name": "enviar_mensagem",
-                "description": "Envia uma mensagem direta para um canal de texto pelo ID.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "canal_id": {"type": "string", "description": "ID numérico do canal"},
-                        "mensagem": {"type": "string", "description": "Conteúdo da mensagem"}
-                    },
-                    "required": ["canal_id", "mensagem"]
-                }
-            }
-        },
+			"type": "function",
+			"function": {
+				"name": "enviar_mensagem",
+				"description": "Envia uma mensagem direta para um canal de texto pelo ID. Nunca use o nome do canal.",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"canal_id": {
+							"type": ["string", "number"],
+							"description": "ID numérico do canal Discord. Exemplo: 1532148619032006817. Nunca use nomes como 'admin'."
+						},
+						"mensagem": {
+							"type": "string",
+							"description": "Conteúdo da mensagem"
+						}
+					},
+					"required": ["canal_id", "mensagem"]
+				}
+			}
+		},
         {
             "type": "function",
             "function": {
@@ -365,17 +376,22 @@ class ToolManager:
             }
         },
         {
-            "type": "function",
-            "function": {
-                "name": "usuario",
-                "description": "Obtém detalhes do perfil e cargos de um membro pelo ID.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"membro_id": {"type": "string", "description": "ID do membro"}},
-                    "required": ["membro_id"]
-                }
-            }
-        },
+			"type": "function",
+			"function": {
+				"name": "usuario",
+				"description": "Obtém detalhes do perfil e cargos de um membro pelo ID.",
+				"parameters": {
+					"type": "object",
+					"properties": {
+						"membro_id": {
+							"type": ["string", "number"],
+							"description": "ID numérico do usuário Discord. Nunca use nome ou apelido."
+						}
+					},
+					"required": ["membro_id"]
+				}
+			}
+		},
         {
             "type": "function",
             "function": {
