@@ -8,10 +8,12 @@ from discord.ext import tasks
 from groq import Groq
 from flask import Flask
 from threading import Thread
+import random
 
 # ==========================================
 # 🔐 CONFIGURAÇÕES E CHAVES
 # ==========================================
+
 TOKEN = os.environ.get("DISCORD_TOKEN")
 GROQ_KEY = os.environ.get("GROQ_API_KEY")
 
@@ -27,6 +29,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 intents.presences = True
+ultima_atividade = datetime.now()
 
 bot = discord.Client(intents=intents)
 
@@ -133,6 +136,24 @@ async def adicionar_memoria(guild, nome, texto):
 # ==========================================
 # 🔧 FUNÇÕES DAS FERRAMENTAS
 # ==========================================
+
+@tasks.loop(seconds=30)
+async def verificar_inatividade():
+    global ultima_atividade
+
+    tempo = (datetime.now() - ultima_atividade).total_seconds()
+
+    if tempo >= 300:  # 5 minutos
+        if bot.status != discord.Status.idle:
+            await bot.change_presence(
+                status=discord.Status.idle,
+                activity=discord.CustomActivity(
+                    name="Dormindo... 😴"
+                )
+            )
+
+
+
 async def cmd_ver_canais(guild, *args):
     print("🚀 TOOL CHAMADA: ver_canais")
     if not guild:
@@ -322,7 +343,8 @@ async def on_ready():
         activity=discord.CustomActivity(name="Tentando não dormir... 😴")
     )
     print(f"✅ Logado como {bot.user}")
-
+    if not verificar_inatividade.is_running():
+        verificar_inatividade.start()
     if not mandar_hora.is_running():
         mandar_hora.start()
 
@@ -485,6 +507,16 @@ async def on_message(message):
                 resposta_final = resposta_final.strip()
                 if resposta_final:
                     historico_canais[canal_id].append({"role": "assistant", "content": resposta_final})
+                    global ultima_atividade
+
+                    ultima_atividade = datetime.now()
+
+                    await bot.change_presence(
+                        status=discord.Status.online,
+                        activity=discord.CustomActivity(
+                            name="Tentando não dormir... 😴"
+                        )
+                    )
                     await message.channel.send(resposta_final)
 
             except Exception as e:
@@ -504,9 +536,10 @@ def home():
 
 @app.route("/status")
 def status():
-    return {
+   return {
         "bot": "Tédio",
-        "status": "online"
+        "status": "online",
+        "ping": random.randint(1, 5)
     }
 
 def iniciar_servidor_web():
