@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import time
@@ -24,12 +25,17 @@ class ConfigManager:
     OWNER_ID_ENV = os.environ.get("OWNER_ID")
     OWNER_ID = int(OWNER_ID_ENV) if OWNER_ID_ENV and OWNER_ID_ENV.isdigit() else None
 
+    # Modelos
     MODELO_PRINCIPAL = "llama-3.3-70b-versatile"
-    MODELO_RAPIDO = "llama-3.1-8b-instant"
+    MODELO_PEQUENO = "llama-3.1-8b-instant"
     
-    MAX_AGENT_STEPS = 5
-    LIMITE_MENSAGENS_HISTORICO = 12
-    MENSAGENS_MANTIDAS_RESUMO = 4
+    # Controle de Ferramentas e Passos por Modelo
+    MODELO_PEQUENO_TOOLS = True
+    MODELO_PEQUENO_MAX_STEPS = 3
+    MODELO_GRANDE_MAX_STEPS = 5
+    
+    LIMITE_MENSAGENS_HISTORICO = 8
+    MENSAGENS_MANTIDAS_RESUMO = 3
     ARQUIVO_MEMORIA = "memoria_tedio.json"
     NOME_CANAL_MEMORIA = "memoria-tedio"
     PORTA_FLASK = 8080
@@ -51,12 +57,14 @@ class ConfigManager:
 
 
 # ==============================================================================
-# 2. LOG MANAGER
+# 2. LOG & TOKEN MANAGER
 # ==============================================================================
 class LogManager:
-    """Sistema de logs centralizado com buffer circular em RAM com timestamps."""
+    """Sistema de logs centralizado e rastreador de consumo de tokens."""
     
     _buffer = deque(maxlen=200)
+    tokens_hoje = 0
+    requisicoes_hoje = 0
 
     @classmethod
     def log(cls, texto: str, nivel: str = "INFO"):
@@ -64,6 +72,11 @@ class LogManager:
         mensagem = f"{hora} [{nivel}] {texto}"
         cls._buffer.append(mensagem)
         print(mensagem)
+
+    @classmethod
+    def registrar_tokens(cls, quantidade: int):
+        cls.tokens_hoje += quantidade
+        cls.requisicoes_hoje += 1
 
     @classmethod
     def obter_logs(cls, quantidade: int = 50):
@@ -88,14 +101,11 @@ class MemoryManager:
         self.cache = self._carregar_e_migrar()
 
     def _carregar_e_migrar(self) -> dict:
-        """Carrega do disco e realiza migração de esquemas antigos para a estrutura atual."""
         if not os.path.exists(self.arquivo):
             return {"usuarios": {}}
         try:
             with open(self.arquivo, "r", encoding="utf-8") as f:
                 dados = json.load(f)
-            
-            # Migração de formato antigo
             if "usuarios" not in dados:
                 novo = {"usuarios": {}}
                 for nome, fatos in dados.items():
@@ -109,7 +119,6 @@ class MemoryManager:
             return {"usuarios": {}}
 
     def salvar_disco(self):
-        """Salva a memória apenas quando houver alterações (Escrita Segura)."""
         try:
             temp_file = f"{self.arquivo}.tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
@@ -123,7 +132,6 @@ class MemoryManager:
         return self.cache.get("usuarios", {}).get(usuario, {}).get("fatos", [])
 
     def obter_memorias_relevantes(self, usuario: str, pergunta: str) -> list:
-        """Filtra memórias do usuário relacionadas com as palavras-chave da consulta."""
         fatos = self.obter_memorias(usuario)
         if not fatos:
             return []
@@ -135,7 +143,7 @@ class MemoryManager:
         }
 
         if not palavras_pergunta:
-            return fatos[:3]  # Retorna as mais recentes se não houver palavras-chave claras
+            return fatos[:2]
 
         relevantes = []
         for fato in fatos:
@@ -143,7 +151,7 @@ class MemoryManager:
             if palavras_pergunta & palavras_fato:
                 relevantes.append(fato)
 
-        return relevantes[:5] if relevantes else fatos[:2]
+        return relevantes[:3] if relevantes else fatos[:1]
 
     async def adicionar_memoria(self, bot_client, guild, usuario: str, texto: str) -> str:
         usuarios = self.cache.setdefault("usuarios", {})
@@ -156,7 +164,6 @@ class MemoryManager:
         self.salvar_disco()
         LogManager.log(f"🧠 Nova memória registrada para {usuario}: {texto}", "MEMORY")
 
-        # Sincronização com o canal reservado do Discord (#memoria-tedio)
         if guild:
             try:
                 canal = await self._garantir_canal(guild)
@@ -199,7 +206,7 @@ class MemoryManager:
 
 
 # ==============================================================================
-# 4. TOOL MANAGER (SCHEMAS + EXECUÇÃO SEGURA)
+# 4. TOOL MANAGER
 # ==============================================================================
 class ToolManager:
     """Gerencia o registro e a execução segura de ferramentas com validações."""
@@ -329,7 +336,6 @@ class ToolManager:
         self.memory_manager = memory_manager
 
     async def executar_tool_segura(self, guild, nome_funcao: str, args: dict, nome_usuario: str) -> str:
-        """Envolvente seguro de execução de ferramentas com controle de erros e validações."""
         LogManager.log(f"🛠️ Solicitando Tool: {nome_funcao} | Args: {args}", "TOOLS")
         
         try:
@@ -355,7 +361,7 @@ class ToolManager:
                 if not canal.permissions_for(guild.me).view_channel:
                     return "Erro: O bot não tem permissão para ler este canal."
                 msgs = []
-                async for m in canal.history(limit=10):
+                async for m in canal.history(limit=5):
                     if not m.author.bot:
                         msgs.append(f"{m.author.display_name}: {m.content}")
                 msgs.reverse()
@@ -375,7 +381,7 @@ class ToolManager:
 
             elif nome_funcao == "executar":
                 if not guild: return "Erro: Sem servidor."
-                canais = [c.name for c in guild.text_channels if c.permissions_for(guild.me).view_channel][:15]
+                canais = [c.name for c in guild.text_channels if c.permissions_for(guild.me).view_channel][:10]
                 total_membros = len([m for m in guild.members if not m.bot])
                 return f"Servidor: {guild.name} | Canais ({len(canais)}): {', '.join(canais)} | Total Membros: {total_membros}"
 
@@ -402,14 +408,14 @@ class ToolManager:
                 termo = str(args.get("termo", "")).lower()
                 resultados = []
                 for c in guild.text_channels:
-                    if len(resultados) >= 10: break
+                    if len(resultados) >= 5: break
                     perm = c.permissions_for(guild.me)
                     if not (perm.view_channel and perm.read_message_history): continue
                     try:
-                        async for m in c.history(limit=25):
+                        async for m in c.history(limit=15):
                             if not m.author.bot and termo in m.content.lower():
-                                resultados.append(f"[{c.name}] {m.author.display_name}: {m.content[:80]}")
-                                if len(resultados) >= 10: break
+                                resultados.append(f"[{c.name}] {m.author.display_name}: {m.content[:60]}")
+                                if len(resultados) >= 5: break
                     except Exception: continue
                 return "\n".join(resultados) if resultados else f"Nenhuma mensagem encontrada com o termo '{termo}'."
 
@@ -417,25 +423,27 @@ class ToolManager:
                 return f"[ERRO]: Ferramenta '{nome_funcao}' não reconhecida."
 
         except discord.NotFound:
-            return f"[ERRO RECURSO]: O ID fornecido para '{nome_funcao}' não foi localizado no Discord."
+            return f"[ERRO RECURSO]: O ID fornecido para '{nome_funcao}' não foi localizado."
         except discord.Forbidden:
-            return f"[ERRO PERMISSÃO]: O bot não possui permissão no Discord para executar '{nome_funcao}'."
+            return f"[ERRO PERMISSÃO]: Permissão negada no Discord para '{nome_funcao}'."
         except Exception as e:
             LogManager.log(f"Exceção em {nome_funcao}: {traceback.format_exc()}", "ERROR")
             return f"[ERRO INESPERADO EM {nome_funcao}]: {str(e)}"
 
 
 # ==============================================================================
-# 5. AGENT MANAGER (ROUTER DE INTENÇÃO + HISTÓRICO + AGENT LOOP)
+# 5. AGENT MANAGER (ARQUITETURA DE MODELOS & TOOLS DINÂMICAS)
 # ==============================================================================
 class AgentManager:
-    """Orquestra as interações com a API Groq, roteamento de intenções e auto-resumo."""
+    """Orquestra a seleção inteligente de modelos, ferramentas e chamadas com fallback."""
 
     PALAVRAS_ACAO = {
         "canal", "canais", "membro", "membros", "usuario", "usuário", "status",
         "dormir", "online", "memoria", "memória", "lembre", "guarde", "pesquisar",
         "buscar", "enviar", "falar", "executar", "servidor", "cargo", "cargos", "id"
     }
+
+    CUMPRIMENTOS_SIMPLES = {"oi", "olá", "ola", "opa", "eai", "e aí", "tudo bem", "boa tarde", "bom dia", "boa noite"}
 
     def __init__(self, memory_manager: MemoryManager, tool_manager: ToolManager):
         self.groq_client = Groq(api_key=ConfigManager.GROQ_KEY)
@@ -446,17 +454,100 @@ class AgentManager:
         self.ultima_saida = ""
 
     def rotear_intencao(self, texto: str) -> bool:
-        """Determina se a solicitação exige execução de ferramentas (ACTION) ou resposta simples (CHAT)."""
+        """Verifica se o texto contém gatilhos que sugerem uso de ferramentas."""
         palavras = {p.strip(".,!?;:\"'").lower() for p in texto.split()}
         return bool(palavras & self.PALAVRAS_ACAO)
 
+    def selecionar_modelo(self, mensagem: str, precisa_tools: bool) -> str:
+        """Determina se deve usar o modelo pequeno (8B) ou grande (70B)."""
+        msg_limpa = mensagem.strip().lower()
+        
+        # Se precisa de ferramentas e o modelo pequeno está proibido de usá-las -> MODELO_PRINCIPAL
+        if precisa_tools and not ConfigManager.MODELO_PEQUENO_TOOLS:
+            return ConfigManager.MODELO_PRINCIPAL
+
+        palavras = msg_limpa.split()
+        e_simples = (
+            msg_limpa in self.CUMPRIMENTOS_SIMPLES or
+            any(r in msg_limpa for r in ["kkk", "hahah", "rsrs"]) or
+            "opinião" in msg_limpa or "acha" in msg_limpa or
+            (not precisa_tools and len(palavras) <= 10)
+        )
+
+        if e_simples:
+            return ConfigManager.MODELO_PEQUENO
+
+        return ConfigManager.MODELO_PRINCIPAL
+
+    def extrair_tempo_espera(self, erro_str: str) -> float:
+        """Extrai o tempo de espera do erro 429 da Groq."""
+        match_min_sec = re.search(r"try again in (\d+)m([\d.]+)s", erro_str)
+        if match_min_sec:
+            return (float(match_min_sec.group(1)) * 60) + float(match_min_sec.group(2))
+
+        match_sec = re.search(r"try again in ([\d.]+)s", erro_str)
+        if match_sec:
+            return float(match_sec.group(1))
+
+        return 5.0
+
+    async def chamar_groq_com_fallback(self, model_preferencial: str, kwargs: dict):
+        """Tenta chamar o modelo preferencial. Se der Rate Limit, tenta o modelo pequeno ajustando as tools."""
+        modelos_para_tentar = [model_preferencial]
+        if model_preferencial != ConfigManager.MODELO_PEQUENO:
+            modelos_para_tentar.append(ConfigManager.MODELO_PEQUENO)
+
+        ultimo_erro = None
+
+        for modelo in modelos_para_tentar:
+            kwargs_tentativa = kwargs.copy()
+            kwargs_tentativa["model"] = modelo
+
+            # Ajuste dinâmico de tools durante o Fallback para 8B
+            if modelo == ConfigManager.MODELO_PEQUENO and not ConfigManager.MODELO_PEQUENO_TOOLS:
+                kwargs_tentativa.pop("tools", None)
+                kwargs_tentativa.pop("tool_choice", None)
+
+            try:
+                LogManager.log(f"🧠 Chamando Groq [{modelo}]...", "AGENT")
+                completion = await asyncio.to_thread(self.groq_client.chat.completions.create, **kwargs_tentativa)
+                
+                if hasattr(completion, 'usage') and completion.usage:
+                    LogManager.registrar_tokens(completion.usage.total_tokens)
+                    
+                return completion
+
+            except Exception as e:
+                erro_txt = str(e)
+                ultimo_erro = e
+
+                if "429" in erro_txt or "rate_limit" in erro_txt.lower():
+                    espera = self.extrair_tempo_espera(erro_txt)
+                    LogManager.log(f"⚠️ Rate Limit no [{modelo}]. Espera sugerida: {espera:.1f}s", "WARNING")
+
+                    if espera <= 8.0 and modelo == ConfigManager.MODELO_PEQUENO:
+                        await asyncio.sleep(espera)
+                        try:
+                            completion = await asyncio.to_thread(self.groq_client.chat.completions.create, **kwargs_tentativa)
+                            if hasattr(completion, 'usage') and completion.usage:
+                                LogManager.registrar_tokens(completion.usage.total_tokens)
+                            return completion
+                        except Exception as e_retry:
+                            ultimo_erro = e_retry
+
+                    LogManager.log(f"🔀 Alternando modelo para economizar tempo/tokens...", "AGENT")
+                    continue
+                else:
+                    raise e
+
+        raise ultimo_erro
+
     async def resumir_historico_se_necessario(self, canal_id: int):
-        """Reduz o histórico do canal gerando um resumo conciso mantendo mensagens recentes."""
         historico = self.historico_canais.get(canal_id, [])
         if len(historico) <= ConfigManager.LIMITE_MENSAGENS_HISTORICO:
             return
 
-        corpo = historico[1:]  # Preserva o prompt de sistema inicial
+        corpo = historico[1:]
         resumo_existente = ""
         offset = 0
 
@@ -471,35 +562,34 @@ class AgentManager:
             return
 
         texto_para_resumo = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in a_resumir if m.get('content'))
-        prompt = "Resuma o histórico a seguir em no máximo 100 palavras mantendo fatos essenciais:\n"
+        prompt = f"Resuma em no máximo 50 palavras:\n{texto_para_resumo}"
         if resumo_existente:
-            prompt += f"Resumo prévio: {resumo_existente}\n"
-        prompt += f"Mensagens recentes:\n{texto_para_resumo}"
+            prompt = f"Resumo anterior: {resumo_existente}\n" + prompt
 
         try:
             res = await asyncio.to_thread(
                 self.groq_client.chat.completions.create,
-                model=ConfigManager.MODELO_RAPIDO,
+                model=ConfigManager.MODELO_PEQUENO,
                 messages=[
-                    {"role": "system", "content": "Você é um resumidor de conversas direto e sucinto."},
+                    {"role": "system", "content": "Você é um resumidor sucinto."},
                     {"role": "user", "content": prompt}
                 ]
             )
+            if hasattr(res, 'usage') and res.usage:
+                LogManager.registrar_tokens(res.usage.total_tokens)
+
             novo_resumo = res.choices[0].message.content.strip()
             self.historico_canais[canal_id] = [historico[0]] + [{"role": "system", "content": f"[RESUMO]: {novo_resumo}"}] + mantidas
             LogManager.log(f"🗜️ Histórico do canal {canal_id} resumido com sucesso.", "AGENT")
         except Exception as e:
-            LogManager.log(f"⚠️ Falha ao resumir histórico do canal: {e}", "ERROR")
+            LogManager.log(f"⚠️ Falha ao resumir histórico: {e}", "ERROR")
 
     async def processar_mensagem(self, canal_id: int, guild, nome_usuario: str, mensagem_texto: str) -> str:
-        """Executa a chamada da IA com suporte a Function Calling em loop assíncrono não-bloqueante."""
         self.ultima_entrada = mensagem_texto
         
-        # Recupera memórias relevantes para enriquecimento de contexto
         memorias_rel = self.memory_manager.obter_memorias_relevantes(nome_usuario, mensagem_texto)
-        str_memoria = f"\n[Memórias relevantes sobre {nome_usuario}: {'; '.join(memorias_rel)}]" if memorias_rel else ""
+        str_memoria = f"\n[Fatos sobre {nome_usuario}: {'; '.join(memorias_rel)}]" if memorias_rel else ""
 
-        # Inicializa o histórico do canal se necessário
         if canal_id not in self.historico_canais:
             self.historico_canais[canal_id] = [
                 {"role": "system", "content": ConfigManager.SYSTEM_PROMPT + str_memoria}
@@ -508,82 +598,89 @@ class AgentManager:
         self.historico_canais[canal_id].append({"role": "user", "content": f"{nome_usuario}: {mensagem_texto}"})
         await self.resumir_historico_se_necessario(canal_id)
 
+        # 1. Análise de Intenção e Seleção de Modelo
         precisa_tools = self.rotear_intencao(mensagem_texto)
+        modelo_atual = self.selecionar_modelo(mensagem_texto, precisa_tools)
+
+        # 2. Definição do Limite de Passos
+        limite_passos = (
+            ConfigManager.MODELO_PEQUENO_MAX_STEPS
+            if modelo_atual == ConfigManager.MODELO_PEQUENO
+            else ConfigManager.MODELO_GRANDE_MAX_STEPS
+        )
+
+        # 3. Controle de Tools por Modelo
+        if modelo_atual == ConfigManager.MODELO_PEQUENO:
+            tools_ativas = precisa_tools and ConfigManager.MODELO_PEQUENO_TOOLS
+        else:
+            tools_ativas = precisa_tools
+
+        # 4. Logs de Execução do Agente
+        LogManager.log(f"Modelo selecionado: {modelo_atual}", "AGENT")
+        LogManager.log(f"Tools ativadas: {tools_ativas}", "AGENT")
+        LogManager.log(f"Limite de passos: {limite_passos}", "AGENT")
+
         sessao_mensagens = list(self.historico_canais[canal_id])
-        
         passos = 0
         resposta_final = ""
 
-        # Loop autônomo do agente limitado por MAX_AGENT_STEPS
-        while passos < ConfigManager.MAX_AGENT_STEPS:
-            passos += 1
-            LogManager.log(f"🤖 Iteração do Agente Groq (Passo {passos}/{ConfigManager.MAX_AGENT_STEPS})...", "AGENT")
+        try:
+            while passos < limite_passos:
+                passos += 1
+                kwargs = {"messages": sessao_mensagens}
 
-            kwargs = {
-                "model": ConfigManager.MODELO_PRINCIPAL,
-                "messages": sessao_mensagens,
-            }
+                if tools_ativas:
+                    kwargs["tools"] = ToolManager.SCHEMAS
+                    kwargs["tool_choice"] = "auto"
 
-            if precisa_tools:
-                kwargs["tools"] = ToolManager.SCHEMAS
-                kwargs["tool_choice"] = "auto"
+                completion = await self.chamar_groq_com_fallback(modelo_atual, kwargs)
 
-            try:
-                # Chamada assíncrona para não bloquear o loop de eventos do Discord
-                completion = await asyncio.to_thread(self.groq_client.chat.completions.create, **kwargs)
-            except Exception as e:
-                if "429" in str(e) or "rate_limit" in str(e).lower():
-                    LogManager.log("⏳ Rate limit atingido. Aguardando 3 segundos...", "WARNING")
-                    await asyncio.sleep(3)
-                    completion = await asyncio.to_thread(self.groq_client.chat.completions.create, **kwargs)
-                else:
-                    raise e
+                msg_resposta = completion.choices[0].message
+                tool_calls = getattr(msg_resposta, "tool_calls", None)
 
-            msg_resposta = completion.choices[0].message
-            tool_calls = getattr(msg_resposta, "tool_calls", None)
-
-            if not tool_calls:
-                resposta_final = msg_resposta.content or ""
-                break
-
-            # Registra as chamadas de ferramentas no histórico da sessão
-            sessao_mensagens.append({
-                "role": "assistant",
-                "content": msg_resposta.content or None,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {"name": tc.function.name, "arguments": tc.function.arguments}
-                    }
-                    for tc in tool_calls
-                ]
-            })
-
-            # Executa cada ferramenta solicitada
-            for tc in tool_calls:
-                nome_fn = tc.function.name
-                try:
-                    args_fn = json.loads(tc.function.arguments)
-                except Exception:
-                    args_fn = {}
-
-                res_tool = await self.tool_manager.executar_tool_segura(guild, nome_fn, args_fn, nome_usuario)
+                if not tool_calls:
+                    resposta_final = msg_resposta.content or ""
+                    break
 
                 sessao_mensagens.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": nome_fn,
-                    "content": str(res_tool)
+                    "role": "assistant",
+                    "content": msg_resposta.content or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments}
+                        }
+                        for tc in tool_calls
+                    ]
                 })
 
-        if not resposta_final:
-            final_comp = await asyncio.to_thread(
-                self.groq_client.chat.completions.create,
-                model=ConfigManager.MODELO_PRINCIPAL,
-                messages=sessao_mensagens
-            )
-            resposta_final = final_comp.choices[0].message.content or ""
+                for tc in tool_calls:
+                    nome_fn = tc.function.name
+                    try:
+                        args_fn = json.loads(tc.function.arguments)
+                    except Exception:
+                        args_fn = {}
+
+                    res_tool = await self.tool_manager.executar_tool_segura(guild, nome_fn, args_fn, nome_usuario)
+
+                    sessao_mensagens.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": nome_fn,
+                        "content": str(res_tool)
+                    })
+
+            if not resposta_final:
+                final_comp = await self.chamar_groq_com_fallback(
+                    ConfigManager.MODELO_PEQUENO, 
+                    {"messages": sessao_mensagens}
+                )
+                resposta_final = final_comp.choices[0].message.content or ""
+
+        except Exception as e:
+            LogManager.log(f"🚨 Falha crítica no pipeline de IA após tentativas de fallback: {e}", "ERROR")
+            resposta_final = "*Pensando: Minha energia acabou...*\n*(bocejo)* Minha cota de pensamentos por hoje estourou na nuvem... me deixa dormir um pouco zZZz"
 
         self.historico_canais[canal_id].append({"role": "assistant", "content": resposta_final})
         self.ultima_saida = resposta_final
@@ -621,7 +718,7 @@ class DiscordManager:
         async def on_ready():
             await self.bot.change_presence(
                 status=discord.Status.online,
-                activity=discord.CustomActivity(name="Tentando não dormir... 😴")
+                activity=discord.CustomActivity(name="Economizando energia... 😴")
             )
             
             if not ConfigManager.OWNER_ID:
@@ -639,12 +736,10 @@ class DiscordManager:
             if message.author.bot:
                 return
 
-            # Processamento de comandos de administração (!tedio)
             if message.content.startswith("!tedio"):
                 if await self._processar_comandos_admin(message):
                     return
 
-            # Responde quando mencionado ou em canais DM
             if self.bot.user.mentioned_in(message) or isinstance(message.channel, discord.DMChannel):
                 self.ultima_atividade = datetime.now()
                 if self.status_atual == "idle":
@@ -697,12 +792,24 @@ class DiscordManager:
             guilds = len(self.bot.guilds)
             users_mem = len(self.memory_manager.cache.get("usuarios", {}))
             m = (
-                f"📊 **Status do Tédio Bot**\n"
+                f"📊 **Status do Tédio Bot v1.6**\n"
                 f"- **Presença:** `{self.status_atual}`\n"
                 f"- **Latência:** `{latencia}ms`\n"
                 f"- **Servidores:** `{guilds}`\n"
+                f"- **Tokens Consumidos Hoje:** `{LogManager.tokens_hoje:,}` / 100,000\n"
+                f"- **Requisições de IA:** `{LogManager.requisicoes_hoje}`\n"
                 f"- **Tarefas Ativas:** `{len(self.tarefas_em_andamento)}`\n"
                 f"- **Usuários em Memória:** `{users_mem}`"
+            )
+            await message.channel.send(m)
+
+        elif cmd == "tokens":
+            pct = (LogManager.tokens_hoje / 100000) * 100
+            m = (
+                f"⛽ **Medidor de Combustível (Tokens Groq)**\n"
+                f"- **Total Consumido:** `{LogManager.tokens_hoje:,}` tokens\n"
+                f"- **Uso da Cota Diária:** `{pct:.2f}%`\n"
+                f"- **Chamadas à API:** `{LogManager.requisicoes_hoje}`"
             )
             await message.channel.send(m)
 
@@ -724,11 +831,11 @@ class DiscordManager:
             for t in self.tarefas_em_andamento:
                 t.cancel()
             self.tarefas_em_andamento.clear()
-            await message.channel.send(f"🛑 `{count}` tarefas em processamento foram canceladas.")
+            await message.channel.send(f"🛑 `{count}` tarefas canceladas.")
 
         elif cmd == "logout":
             self.desligando = True
-            await message.channel.send("👋 Desconectando e encerrando sessão do bot...")
+            await message.channel.send("👋 Desconectando bot...")
             await self.bot.close()
 
         elif cmd == "tools":
@@ -737,10 +844,10 @@ class DiscordManager:
 
         elif cmd == "memory":
             dados = json.dumps(self.memory_manager.cache, indent=2, ensure_ascii=False)
-            await message.channel.send(f"🧠 **Cache de Memória Ativo:**\n```json\n{dados[:1800]}\n```")
+            await message.channel.send(f"🧠 **Cache de Memória:**\n```json\n{dados[:1800]}\n```")
 
         else:
-            await message.channel.send("❓ Comando inválido. Opções: `status`, `log`, `input`, `output`, `cancel`, `logout`, `tools`, `memory`.")
+            await message.channel.send("❓ Comandos válidos: `status`, `tokens`, `log`, `input`, `output`, `cancel`, `logout`, `tools`, `memory`.")
 
         return True
 
@@ -757,7 +864,8 @@ app_flask = Flask(__name__)
 def home():
     return jsonify({
         "status": "online",
-        "bot": "Tédio AI Discord Agent",
+        "bot": "Tédio AI Discord Agent v1.6",
+        "tokens_hoje": LogManager.tokens_hoje,
         "timestamp": datetime.now().isoformat()
     })
 
@@ -774,7 +882,7 @@ def iniciar_servidor_web():
 # 🚀 PONTO DE ENTRADA PRINCIPAL
 # ==============================================================================
 if __name__ == "__main__":
-    LogManager.log("⚙️ Inicializando Tédio Bot v2.0...", "SYSTEM")
+    LogManager.log("⚙️ Inicializando Tédio Bot v1.6 (Model Control Edition)...", "SYSTEM")
     iniciar_servidor_web()
     
     discord_agent = DiscordManager()
