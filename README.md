@@ -24,4 +24,6 @@ If a fork intentionally includes malware or other malicious functionality, it is
 
 ### Important
 
-Do not attempt to feed TEDIO with any type of liquid.
+- Do not attempt to feed TEDIO with any type of liquid.
+- Do not eat the parameters.
+- The developers are not responsible for damage caused by ignoring either of the above.
