@@ -1,0 +1,11 @@
+discord.py>=2.3.2
+groq>=0.9.0
+flask>=3.0.0
+chromadb>=0.5.0
+
+# Só precisa instalar o(s) provedor(es) de LLM que voce for de fato usar
+# em MODELO_PRINCIPAL/MODELO_PEQUENO (config.py) - o import de cada um e
+# lazy (so acontece quando esse provedor especifico e instanciado).
+openai>=1.0.0        # usado por: openrouter, moonshot, openai
+anthropic>=0.30.0    # usado por: anthropic
+google-genai>=0.3.0  # usado por: google

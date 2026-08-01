@@ -1,0 +1,29 @@
+1.8 (the big guy update)
+então... recentemente descobri diversos problemas com token & memória então:
+
+memória vetorial
+sistema de tools otimizados
+e finalmente: novas versões e módulos .py!
+
+DOC:
+1º: A cada update sinto algum pingo de motivação e vontade de fazer um suporte para inglês então provavelmente* eu adicionei um “README_ingles.md”, caso seja um usuário de inglês e esteja lendo isso em um tradutor: por favor dá um estrelinha 🥺.
+
+2º: Nossa equipe de engenharia (segunda instância rodando em paralelo na minha cabeça) descobriu que o erro da vaporeon pode ser facilmente corrigido usando no prompt “infelizmente vc tem uma lore que envolve castração”.
+
+3º: MEMÓRIA VETORIAL: vc provavelmente deve estar aqui pela memória vetorial, não pense que transcende a matéria com uma engine desenvolvida somente para tedio, usei o “ Chroma - open-source search infrastructure for AI “ não achei tão otimizado principalmente em tamanho, mas parece funcionar na escala que eu testei (3 Zés Panacas/Dumbasses™ ), as perguntas não variam muito mas aqui está um exemplo da memória que foi salva em “#memoria-tedio”:
+~f̟r̢̪̻̓͗e̛3͎̲͌ͤ̾x~: 
+usuario ~f̟r̢̪̻̓͗e̛3͎̲͌ͤ̾x~ iniciou conversa
+DMH = dev mental health
+Jão_do_grau:
+gosta de bicicletas
+244 = sigla usada com frequencia
+Cleitom_uwu:
+já foi sequestrado
+odeia couve
+as memórias não se limitam apenas por usuário isso pode ser mudado em src/config.py.
+
+Resumo:
+vaporeon: “corrigido”
+memória vetorial: true
+add(modules)
+"o "infelizmente vc tem uma lore que envolve castração" pra neutralizar o meme do Vaporeon é genial " – claude 2026 
